@@ -67,9 +67,8 @@ def notify(title, content):
 
 
 # ---------- 工具函数 ----------
-def _read_from_env_file():
-    """兜底：青龙通常会把环境变量写入 /ql/config/env.sh，
-    若任务进程未注入 JD_COOKIE，则从此文件读取。"""
+def _read_from_env_file(name):
+    """兜底：老版本青龙会把环境变量写入 env.sh，若任务进程未注入则从此文件读取。"""
     candidates = ["/ql/config/env.sh", "/ql/data/config/env.sh", "/ql/.env"]
     for path in candidates:
         try:
@@ -77,7 +76,7 @@ def _read_from_env_file():
                 txt = f.read()
             for line in txt.splitlines():
                 line = line.strip()
-                if line.startswith("export JD_COOKIE=") or line.startswith("JD_COOKIE="):
+                if line.startswith(f"export {name}=") or line.startswith(f"{name}="):
                     val = line.split("=", 1)[1].strip().strip("'").strip('"')
                     if val and val.lower() not in ("''", '""'):
                         return val
@@ -86,9 +85,9 @@ def _read_from_env_file():
     return ""
 
 
-def _read_from_db():
+def _read_env_from_db(name):
     """兜底：青龙 2.x 的环境变量保存在 sqlite（env.db / database.sqlite 的 envs 表），
-    若进程环境与 env.sh 均未提供 JD_COOKIE，则直接查库。"""
+    API 创建的变量可能未注入任务进程，直接按变量名查库。"""
     try:
         import sqlite3
     except Exception:
@@ -110,8 +109,8 @@ def _read_from_db():
                 if tbl in tabs:
                     try:
                         cur.execute(f"SELECT name, value, status FROM {tbl}")
-                        for name, value, status in cur.fetchall():
-                            if name == "JD_COOKIE" and str(status) == "0" and value:
+                        for n, value, status in cur.fetchall():
+                            if n == name and str(status) == "0" and value:
                                 conn.close()
                                 return value
                     except Exception:
@@ -122,13 +121,19 @@ def _read_from_db():
     return ""
 
 
+def get_env_value(name, default=""):
+    """通用环境变量读取：进程环境 -> env.sh -> 青龙 env.db 兜底"""
+    v = os.environ.get(name, "").strip()
+    if not v:
+        v = _read_from_env_file(name).strip()
+    if not v:
+        v = _read_env_from_db(name).strip()
+    return v or default
+
+
 def get_cookies():
     """从环境变量读取多个账号的 Cookie（支持 & 与换行分隔）"""
-    raw = os.environ.get("JD_COOKIE", "")
-    if not raw:
-        raw = _read_from_env_file()
-    if not raw:
-        raw = _read_from_db()
+    raw = get_env_value("JD_COOKIE")
     if not raw:
         return []
     parts = re.split(r"[&\n]+", raw.strip())
@@ -271,7 +276,7 @@ def task_bean_video(session, cookie):
                      {"taskId": t_id, "taskType": "bean"}, appid="ld")
             if do.get("success") or do.get("code") in ("0", 0):
                 done += 1
-            time.sleep(1)
+            time.sleep(random.uniform(1, 4))
         return (f"【{pin}】赚京豆任务完成 {done} 个"
                 f"（接口随活动变化，请关注运行日志）")
     except Exception as e:
@@ -309,7 +314,7 @@ def task_jd_farm(session, cookie):
                         {"roundId": round_id, "type": 1}, appid="ld")
                 if not (w.get("success") or w.get("code") in ("0", 0)):
                     break
-                time.sleep(1)
+                time.sleep(random.uniform(1, 4))
             log.append("浇水:已执行")
         except Exception as e:
             log.append(f"浇水异常:{e}")
@@ -329,7 +334,7 @@ def task_jd_farm(session, cookie):
                           "roundId": round_id}, appid="ld")
                 if rr.get("success") or rr.get("code") in ("0", 0):
                     got += 1
-                time.sleep(1)
+                time.sleep(random.uniform(1, 4))
             log.append(f"任务领奖:{got}个")
         except Exception as e:
             log.append(f"任务领取异常:{e}")
@@ -341,7 +346,7 @@ def task_jd_farm(session, cookie):
                           {"type": 1, "actionType": 1, "roundId": round_id}, appid="ld")
                 if not (lot.get("success") or lot.get("code") in ("0", 0)):
                     break
-                time.sleep(1)
+                time.sleep(random.uniform(1, 4))
             log.append("抽奖:已执行")
         except Exception as e:
             log.append(f"抽奖异常:{e}")
@@ -378,7 +383,7 @@ def task_jd_ranch(session, cookie):
                 f = api(session, cookie, "feed", {"version": 2, "type": 1}, appid="ld")
                 if not (f.get("success") or f.get("code") in ("0", 0)):
                     break
-                time.sleep(1)
+                time.sleep(random.uniform(1, 4))
             log.append("喂养:已执行")
         except Exception as e:
             log.append(f"喂养异常:{e}")
@@ -396,7 +401,7 @@ def task_jd_ranch(session, cookie):
                          {"taskId": t_id, "version": 2}, appid="ld")
                 if rr.get("success") or rr.get("code") in ("0", 0):
                     got += 1
-                time.sleep(1)
+                time.sleep(random.uniform(1, 4))
             log.append(f"任务领奖:{got}个")
         except Exception as e:
             log.append(f"任务领取异常:{e}")
@@ -408,7 +413,7 @@ def task_jd_ranch(session, cookie):
                           {"version": 2, "type": 1}, appid="ld")
                 if not (lot.get("success") or lot.get("code") in ("0", 0)):
                     break
-                time.sleep(1)
+                time.sleep(random.uniform(1, 4))
             log.append("抽奖:已执行")
         except Exception as e:
             log.append(f"抽奖异常:{e}")
@@ -427,6 +432,17 @@ def main():
         notify("京东脚本", "未检测到 JD_COOKIE 环境变量（进程/配置文件/数据库均未找到），请在青龙面板中配置。")
         return
 
+    # 防风控：随机延迟后再开始（JD_DELAY_MAX 为最大分钟数，默认 30，设 0 关闭）
+    try:
+        delay_max = max(0, int(get_env_value("JD_DELAY_MAX", "30")))
+    except ValueError:
+        delay_max = 30
+    if delay_max > 0:
+        delay = random.randint(0, delay_max * 60)
+        print(f"== 防风控：随机延迟 {delay // 60} 分 {delay % 60} 秒后开始执行"
+              f"（环境变量 JD_DELAY_MAX 可调，单位分钟，0 为关闭）==")
+        time.sleep(delay)
+
     all_msgs = []
     for cookie in cookies:
         s = requests.Session()
@@ -440,7 +456,7 @@ def main():
             task_jd_ranch(s, cookie),
         ]
         all_msgs.extend(msgs)
-        time.sleep(2)  # 账号间稍作间隔，降低风控
+        time.sleep(random.uniform(3, 10))  # 账号间随机间隔，降低风控
 
     content = "\n".join(all_msgs)
     notify("京东每日任务", content)
