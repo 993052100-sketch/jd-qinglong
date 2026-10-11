@@ -362,6 +362,8 @@ def task_jd_ranch(session, cookie):
 # ---------- 主流程 ----------
 def main():
     cookies = get_cookies()
+    pins = [get_pin(c) for c in cookies]
+    print(f"== 京东脚本启动：检测到 {len(cookies)} 个账号 -> {', '.join(pins)} ==")
     if not cookies:
         notify("京东脚本", "未检测到 JD_COOKIE 环境变量，请在青龙面板中配置。")
         return
