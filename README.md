@@ -10,6 +10,7 @@
 | `jd_guagua_run.py` | 刮刮卡启动器：兜底读取 JD_COOKIE 后启动上面的 JS（绕开 API 建变量不注入问题） |
 | `jd_cookie_helper.py` | 在你自己电脑上运行，扫码登录后一键提取京东 Cookie |
 | `tb_flashsign.py` | 淘宝 / 闪购签到（mtop 接口 + _m_h5_tk 签名，多账号） |
+| `tb_leyuan.py` | 淘宝「乐园币」玩法复刻（首页→签到→做任务→查余额，mtop 签名） |
 | `tb_cookie_helper.py` | 在你自己电脑上运行，登录后一键提取淘宝移动端 Cookie |
 | `requirements.txt` | 青龙面板需要的依赖（requests） |
 | `requirements-local.txt` | 仅本机 Cookie 工具需要（playwright），青龙上不用装 |
@@ -125,6 +126,41 @@ python3 tb_cookie_helper.py
 
 > ⚠️ 说明：该 JS 为社区混淆脚本（京东此类脚本惯例，防接口分析），运行时会将你的
 > Cookie 用于调用京东官方接口。介意者可自行审计或放弃此任务。
+
+---
+
+---
+
+## 淘宝乐园币玩法（tb_leyuan.py）
+
+> ⚠️ 复刻两年前的「乐园币」游戏化活动（入口：淘宝闪购 → 搜索 → 天天免单 → 跳转参与）。
+> 两年前的活动接口大概率已下线，脚本里的 apiName 是按当年命名规律推算的**占位值**，
+> 需要你抓包核对后替换脚本顶部 `LEYUAN` 配置（玩法逻辑固定，接口名随活动变）。
+
+### 玩法（脚本已实现的逻辑）
+1. 查询活动首页（拿活动状态、币余额、任务列表入口）
+2. 每日签到领币（连续签到通常领更多）
+3. 做任务攒币（浏览商品/店铺、分享、加购等，每个任务带 taskToken）
+4. 查询币余额（可用于兑换红包/实物）
+
+### 部署
+1. 青龙面板 → **环境变量** → `TAO_COOKIE`（与闪购签到共用同一个 Cookie 变量）
+2. 定时任务 → 新建：
+   - 命令：`python3 /ql/data/scripts/tb_leyuan.py`
+   - 定时：`40 9 * * *`（每天 9:40，与闪购签到错开；脚本会再随机延迟 0~30 分钟防风控）
+3. 同样支持 `TAO_DELAY_MAX` / `TAO_APPKEY` 环境变量
+
+### 替换真实接口名（★关键步骤）
+两年前乐园币活动接口现在多半不可达，运行返回 `FAIL_SYS_API_NOT_FOUNDED` 即说明需要替换：
+1. 手机装 HttpCanary / 抓包精灵（Android），或电脑 Charles/Fiddler + 手机代理
+2. 打开手机淘宝 → 闪购 → 搜索「天天免单」→ 进活动 → 参与乐园币，触发签到/做任务
+3. 在抓包记录里找 `h5api.m.taobao.com` 的请求，路径 `/h5/{apiName}/1.0/` 的 `apiName`
+   就是真实接口名；请求体 `data` JSON 即参数（通常含 `activityId` / `bizCode`）
+4. 把 `apiName` 填进 `tb_leyuan.py` 顶部 `LEYUAN` 的 `index_api` / `sign_api` /
+   `task_list_api` / `task_do_api`，把 `activityId` / `bizCode` 填进对应 `data`
+
+> 余额/任务字段名各活动不同，脚本已对 `coin/balance/gold/remainCoin`、任务列表
+> `taskList/tasks/taskInfos`、任务 token `taskToken/bizToken/token` 做了多候选兼容。
 
 ---
 
