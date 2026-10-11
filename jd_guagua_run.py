@@ -105,10 +105,16 @@ def main():
     if DELAY_ENV:
         env[DELAY_ENV] = "1"
 
-    target = os.path.join(SCRIPT_DIR, "jd_guagua.js")
-    if not os.path.exists(target):
-        print(f"【刮刮卡启动器】未找到 {target}，请确认订阅已拉取，退出。")
+    # 优先使用整库订阅（feverrun/my_scripts）里的脚本：guagua 需要完整库才能运行
+    candidates = [
+        os.path.join(SCRIPT_DIR, "..", "feverrun_my_scripts_main", "jd_guagua.js"),
+        os.path.join(SCRIPT_DIR, "jd_guagua.js"),
+    ]
+    target = next((os.path.normpath(p) for p in candidates if os.path.exists(p)), None)
+    if not target:
+        print("【刮刮卡启动器】未找到 jd_guagua.js（整库订阅与本仓库均无），退出。")
         sys.exit(1)
+    print(f"【刮刮卡启动器】使用脚本: {target}")
 
     print("【刮刮卡启动器】启动 node jd_guagua.js ...\n", flush=True)
     ret = subprocess.call(["node", target], env=env)
