@@ -87,25 +87,35 @@ def _read_from_env_file():
 
 
 def _read_from_db():
-    """兜底：青龙的环境变量保存在 sqlite 数据库(envs 表)，
+    """兜底：青龙 2.x 的环境变量保存在 sqlite（env.db / database.sqlite 的 envs 表），
     若进程环境与 env.sh 均未提供 JD_COOKIE，则直接查库。"""
     try:
         import sqlite3
     except Exception:
         return ""
     candidates = [
-        "/ql/data/db/settings.db", "/ql/db/settings.db",
-        "/ql/data/db/ql.db", "/ql/config/db/settings.db",
+        "/ql/data/db/env.db",
+        "/ql/data/db/database.sqlite",
+        "/ql/data/db/settings.db",
+        "/ql/data/db/ql.db",
     ]
+    tables = ("envs", "Envs", "ENV", "env")
     for db in candidates:
         try:
             conn = sqlite3.connect(db)
             cur = conn.cursor()
-            cur.execute("SELECT name, value, status FROM envs")
-            for name, value, status in cur.fetchall():
-                if name == "JD_COOKIE" and int(status) == 0 and value:
-                    conn.close()
-                    return value
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tabs = [r[0] for r in cur.fetchall()]
+            for tbl in tables:
+                if tbl in tabs:
+                    try:
+                        cur.execute(f"SELECT name, value, status FROM {tbl}")
+                        for name, value, status in cur.fetchall():
+                            if name == "JD_COOKIE" and str(status) == "0" and value:
+                                conn.close()
+                                return value
+                    except Exception:
+                        continue
             conn.close()
         except Exception:
             continue
@@ -414,32 +424,7 @@ def main():
     pins = [get_pin(c) for c in cookies]
     print(f"== 京东脚本启动：检测到 {len(cookies)} 个账号 -> {', '.join(pins)} ==")
     if not cookies:
-        # ---- 临时诊断（确认注入失败根因后移除）----
-        print("【诊断】开始排查 JD_COOKIE 来源：")
-        import os, glob
-        for d in ["/ql/config", "/ql/data/db", "/ql/data", "/ql"]:
-            try:
-                print(f"  目录 {d}: {sorted(os.listdir(d))[:30]}")
-            except Exception as e:
-                print(f"  目录 {d} 错误: {e}")
-        for p in glob.glob("/ql/**/*.json", recursive=True)[:200]:
-            if "node_modules" in p or "/.git/" in p:
-                continue
-            try:
-                with open(p, "r", encoding="utf-8", errors="ignore") as fh:
-                    if "JD_COOKIE" in fh.read(200000):
-                        print("  >>> 含 JD_COOKIE 文件:", p)
-            except Exception:
-                pass
-        for p in ["/ql/config/env.sh", "/ql/data/config/env.sh", "/ql/env.sh"]:
-            try:
-                with open(p, "r", encoding="utf-8", errors="ignore") as fh:
-                    txt = fh.read()
-                print(f"  {p} 存在, 含JD_COOKIE={'JD_COOKIE' in txt}")
-            except Exception:
-                print(f"  {p} 不存在")
-        # ---- 诊断结束 ----
-        notify("京东脚本", "未检测到 JD_COOKIE 环境变量，请在青龙面板中配置。")
+        notify("京东脚本", "未检测到 JD_COOKIE 环境变量（进程/配置文件/数据库均未找到），请在青龙面板中配置。")
         return
 
     all_msgs = []
