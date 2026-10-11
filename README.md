@@ -14,6 +14,7 @@
 | `tb_cookie_helper.py` | 在你自己电脑上运行，登录后一键提取淘宝移动端 Cookie |
 | `requirements.txt` | 青龙面板需要的依赖（requests） |
 | `requirements-local.txt` | 仅本机 Cookie 工具需要（playwright），青龙上不用装 |
+| `android/` | 淘宝走 App 内自动化（AutoX.js 模拟点击手淘），详见 android/README.md |
 
 ## 当前支持的活动（2026-10 实测校准）
 | 任务 | 状态 |
@@ -76,6 +77,8 @@ python3 jd_cookie_helper.py
 
 ## 淘宝闪购签到（tb_flashsign.py）
 
+> 🛑 **方案已变更（2026-10，重要）**：经实测，淘宝 mtop 网关现已拦截纯 md5 轻签名(x-sign)请求，**任意接口（含购物车、商品详情等核心接口）都统一返回 `FAIL_SYS_API_NOT_FOUNDED`**，根因是缺淘宝安全 SDK 签名参数（`x-sgext`/`x-mini-wua` 等）。本文件纯 HTTP 方案**已失效**，请改用 **`android/` 目录的 App 内自动化方案**（AutoX.js 模拟点击手淘，由淘宝安全 SDK 自动签名）。详见 [android/README.md](android/README.md)。下方说明仅作历史参考，按此部署无法签到成功。
+
 > ⚠️ 淘宝接口与京东不同：走 `mtop` 体系，必须用 `_m_h5_tk` 做 md5 签名（x-sign），
 > 且**签到活动的接口名（apiName）会随每一期活动变化**。脚本内置的接口名是当前（2026-10）
 > 常见的，若某活动长期失败，需要你按当期活动抓包核对后替换脚本顶部 `SIGN_ACTIVITIES`。
@@ -132,6 +135,8 @@ python3 tb_cookie_helper.py
 ---
 
 ## 淘宝乐园币玩法（tb_leyuan.py）
+
+> 🛑 同上，纯 HTTP 方案已失效（淘宝网关拦截轻签名），请改用 `android/` 的 App 内自动化方案。下方仅作历史参考。
 
 > ⚠️ 复刻两年前的「乐园币」游戏化活动（入口：淘宝闪购 → 搜索 → 天天免单 → 跳转参与）。
 > 两年前的活动接口大概率已下线，脚本里的 apiName 是按当年命名规律推算的**占位值**，
