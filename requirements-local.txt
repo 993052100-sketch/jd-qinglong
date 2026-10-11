@@ -1,0 +1,2 @@
+# 仅本机抓取 Cookie 工具需要，青龙面板上不用装（避免 NAS 上误装浏览器）
+playwright

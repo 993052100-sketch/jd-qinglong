@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# 本地环境 / 密钥（绝不提交）
+.env
+*.local
+
+# 系统
+.DS_Store
