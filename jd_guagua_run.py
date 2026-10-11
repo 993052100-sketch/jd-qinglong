@@ -117,7 +117,8 @@ def main():
     print(f"【刮刮卡启动器】使用脚本: {target}")
 
     print("【刮刮卡启动器】启动 node jd_guagua.js ...\n", flush=True)
-    ret = subprocess.call(["node", target], env=env)
+    # --trace-exit: 静默 process.exit 时打印调用堆栈，便于排查
+    ret = subprocess.call(["node", "--trace-exit", target], env=env)
     print(f"\n【刮刮卡启动器】jd_guagua.js 退出码 {ret}")
     sys.exit(ret)
 
