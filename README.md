@@ -15,6 +15,7 @@
 | `requirements.txt` | 青龙面板需要的依赖（requests） |
 | `requirements-local.txt` | 仅本机 Cookie 工具需要（playwright），青龙上不用装 |
 | `android/` | 淘宝走 App 内自动化（AutoX.js 模拟点击手淘），详见 android/README.md |
+| `jd_activity_scanner.py` | 本地扫描工具：探测当前可参与的京东活动（存活/下线诊断），无需青龙依赖 |
 
 ## 当前支持的活动（2026-10 实测校准）
 | 任务 | 状态 |
@@ -62,14 +63,31 @@
 ## 获取京东 Cookie
 Cookie 相当于登录凭证，**只保存在青龙环境变量里，不要外泄**。
 
-在本机（Mac / Windows）执行：
+在本机（Mac / Windows / Linux）执行：
 ```bash
 pip install playwright
 playwright install chromium
 python3 jd_cookie_helper.py
 ```
-脚本会打开京东登录页，用手机京东 App 扫码，登录成功后终端会打印一行
-`pt_key=...; pt_pin=...`，整行复制填到青龙的 `JD_COOKIE` 即可。
+脚本会**自动打开京东登录页并切到扫码登录**，用手机京东 App 扫码，登录成功后：
+- 自动提取 `pt_key=...; pt_pin=...` 等关键字段
+- 询问是否**继续添加其他账号**（多账号用 `&` 连接，符合 JD_COOKIE 约定）
+- 结果写入本地 `jd_cookie.txt` 并复制到剪贴板（mac/win/linux）
+
+可选参数：
+```bash
+python3 jd_cookie_helper.py --force-scan    # 忽略缓存，强制重新扫码
+python3 jd_cookie_helper.py --headless      # 无界面模式（需已有登录态缓存）
+python3 jd_cookie_helper.py --state s.json  # 指定登录态缓存文件路径
+python3 jd_cookie_helper.py --output f.txt  # 指定输出文件
+python3 jd_cookie_helper.py --no-clipboard  # 不复制剪贴板
+```
+**登录态缓存**：扫码成功后会在本地保存 `jd_auth_state.json`（浏览器登录态）。
+下次运行优先用它恢复，只要京东登录态未失效就**免扫码直接刷新 Cookie**；
+登录态失效（跳转登录页）会自动作废并重走扫码。`--force-scan` 可强制重扫。
+
+整行复制填到青龙的 `JD_COOKIE` 即可。京东会风控，登录态一般几天到几十天失效，
+签到突然不跑就重新跑本工具。
 
 ---
 
@@ -179,3 +197,36 @@ python3 tb_cookie_helper.py
 - **Cookie 会过期**：一般几天到几十天失效，签到突然不跑就重新抓一次 Cookie。
 - 想要农场/牧场等 h5st 签名活动的完整支持，建议在青龙「订阅管理」里额外订阅
   社区维护的 JD 脚本仓库（搜"青龙 jd 订阅"找当前活跃的几个）。
+
+---
+
+## 京东活动存活扫描器（jd_activity_scanner.py）
+
+纯本地运行、**无需青龙依赖**的扫描工具：内置一份京东常见活动清单，对每个活动做
+在线探测，输出"哪些还活着 / 哪些已下线"的诊断报告，避免你花时间配置已死活动。
+
+三类探测策略：
+- `api`：直接调用京东公开接口（无需 h5st 签名），如签到、赚京豆任务
+- `page`：抓取京东公开活动页，按 HTTP 状态 + 结束关键词判断，如活动广场
+- `signed`：需 h5st 签名的活动（东东农场/种豆得豆等），纯 HTTP 无法调用，标注需社区 JS 脚本
+
+### 用法（本机或青龙皆可，只要 python3 + requests）
+```bash
+# 仅用公开接口 / 页面探测（不读 Cookie）
+python3 jd_activity_scanner.py
+
+# 传入 Cookie（提升 API 探测精度，能看到真实活动状态）；也可复用环境变量 JD_COOKIE
+python3 jd_activity_scanner.py --cookie "pt_key=...; pt_pin=...;"
+
+# 指定报告输出路径（默认 jd_activity_report.md）
+python3 jd_activity_scanner.py --output activity_report.md
+
+# 只扫描某一类：签到 / 任务 / 游戏 / 互动 / 聚合
+python3 jd_activity_scanner.py --category 签到
+
+# 仅打印内置活动清单
+python3 jd_activity_scanner.py --list
+```
+
+> 提示：无 Cookie 时，需登录的接口类活动会显示"需登录查看"，配置 `JD_COOKIE`
+> 后重跑即可看到真实在线状态。活动清单在脚本顶部 `ACTIVITIES` 里，可自行增删。

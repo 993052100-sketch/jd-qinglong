@@ -9,5 +9,13 @@ venv/
 .env
 *.local
 
+# 京东登录态与 Cookie（敏感，绝不提交）
+jd_auth_state.json
+jd_cookie.txt
+jd_cookie*.txt
+
+# 本地生成的扫描报告（按需保留，不提交）
+jd_activity_report.md
+
 # 系统
 .DS_Store
