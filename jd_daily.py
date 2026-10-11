@@ -8,6 +8,8 @@
   2. 京喜签到
   3. 京东超市签到
   4. 看视频 / 做任务赚京豆（best-effort，接口随活动变动）
+  5. 东东农场（种豆得豆）：签到 + 浇水 + 任务奖励领取 + 抽奖
+  6. 东东牧场（养牛养羊）：签到 + 喂养 + 任务奖励领取 + 抽奖
 
 == 部署步骤（飞牛 NAS 上的青龙面板）==
 1. 青龙面板 → 环境变量 → 新建：
@@ -220,19 +222,72 @@ def task_bean_video(session, cookie):
 def task_jd_farm(session, cookie):
     """
     东东农场（种豆得豆）每日任务（best-effort）
-    流程：进入农场 → 签到 → 浇水 → 领取。接口随版本变动，请按需微调。
+    流程：进入农场 → 签到 → 浇水(用满当日水) → 领取任务奖励 → 抽奖。
+    各动作相互独立、异常兜底，单个失败不影响其他。
+    接口随版本变动是常态，请关注运行日志；若某 functionId 长期报错，按当期活动微调。
     """
     pin = get_pin(cookie)
+    log = []
     try:
-        home = api(session, cookie, "farmHome", {"version": 2, "channel": "1"}, appid="ld")
+        home = api(session, cookie, "farmHome", {"version": 4, "channel": 1}, appid="ld")
         if home.get("error"):
             return f"【{pin}】东东农场进入失败：{home['error']}"
         data = home.get("data", {}) or {}
         round_id = data.get("roundId") or data.get("farmUserPro", {}).get("roundId")
-        api(session, cookie, "farmSign", {"roundId": round_id}, appid="ld")   # 签到
-        api(session, cookie, "farmWater", {"roundId": round_id, "type": 1}, appid="ld")  # 浇水
-        api(session, cookie, "gotFarm", {"roundId": round_id, "type": 1}, appid="ld")    # 领取
-        return f"【{pin}】东东农场：签到+浇水+领取（请关注日志确认）"
+
+        # 签到
+        try:
+            r = api(session, cookie, "farmSign", {"roundId": round_id}, appid="ld")
+            ok = r.get("success") or r.get("code") in ("0", 0)
+            log.append("签到:" + ("OK" if ok else str(r.get("message", "-"))))
+        except Exception as e:
+            log.append(f"签到异常:{e}")
+
+        # 浇水（最多连续 10 次，用满当日水滴即停）
+        try:
+            for _ in range(10):
+                w = api(session, cookie, "farmWater",
+                        {"roundId": round_id, "type": 1}, appid="ld")
+                if not (w.get("success") or w.get("code") in ("0", 0)):
+                    break
+                time.sleep(1)
+            log.append("浇水:已执行")
+        except Exception as e:
+            log.append(f"浇水异常:{e}")
+
+        # 任务列表：查询 + 领取已完成任务奖励
+        try:
+            tl = api(session, cookie, "farmTaskList",
+                     {"version": 4, "channel": 1, "roundId": round_id}, appid="ld")
+            tasks = (tl.get("data", {}) or {}).get("taskList", []) or []
+            got = 0
+            for t in tasks:
+                t_id = t.get("taskId")
+                if not t_id:
+                    continue
+                rr = api(session, cookie, "receiveFarmTask",
+                         {"taskId": t_id, "taskType": t.get("taskType", 2),
+                          "roundId": round_id}, appid="ld")
+                if rr.get("success") or rr.get("code") in ("0", 0):
+                    got += 1
+                time.sleep(1)
+            log.append(f"任务领奖:{got}个")
+        except Exception as e:
+            log.append(f"任务领取异常:{e}")
+
+        # 抽奖（用剩余抽奖券，最多 5 次）
+        try:
+            for _ in range(5):
+                lot = api(session, cookie, "farmLottery",
+                          {"type": 1, "actionType": 1, "roundId": round_id}, appid="ld")
+                if not (lot.get("success") or lot.get("code") in ("0", 0)):
+                    break
+                time.sleep(1)
+            log.append("抽奖:已执行")
+        except Exception as e:
+            log.append(f"抽奖异常:{e}")
+
+        return f"【{pin}】东东农场：{' | '.join(log)}"
     except Exception as e:
         return f"【{pin}】东东农场异常：{e}"
 
@@ -240,17 +295,66 @@ def task_jd_farm(session, cookie):
 def task_jd_ranch(session, cookie):
     """
     东东牧场（养牛养羊）每日任务（best-effort）
-    流程：初始化 → 签到 → 喂养一次 → 领取。接口变动频繁，请按需微调。
+    流程：初始化 → 签到 → 喂养(用满饲料) → 领取任务奖励 → 抽奖。
+    各动作相互独立、异常兜底。接口变动频繁，请按需微调。
     """
     pin = get_pin(cookie)
+    log = []
     try:
         init = api(session, cookie, "taskInit", {"version": 2}, appid="ld")
         if init.get("error"):
             return f"【{pin}】东东牧场进入失败：{init['error']}"
-        api(session, cookie, "ranchSign", {"type": 1}, appid="ld")        # 签到
-        api(session, cookie, "feed", {"type": 1}, appid="ld")             # 喂养
-        api(session, cookie, "receiveTask", {"type": 1}, appid="ld")      # 领取
-        return f"【{pin}】东东牧场：签到+喂养+领取（请关注日志确认）"
+
+        # 签到
+        try:
+            r = api(session, cookie, "ranchSign", {"version": 2, "type": 1}, appid="ld")
+            ok = r.get("success") or r.get("code") in ("0", 0)
+            log.append("签到:" + ("OK" if ok else str(r.get("message", "-"))))
+        except Exception as e:
+            log.append(f"签到异常:{e}")
+
+        # 喂养（最多连续 10 次，用满饲料即停）
+        try:
+            for _ in range(10):
+                f = api(session, cookie, "feed", {"version": 2, "type": 1}, appid="ld")
+                if not (f.get("success") or f.get("code") in ("0", 0)):
+                    break
+                time.sleep(1)
+            log.append("喂养:已执行")
+        except Exception as e:
+            log.append(f"喂养异常:{e}")
+
+        # 任务列表：查询 + 领取已完成任务奖励
+        try:
+            tl = api(session, cookie, "taskList", {"version": 2}, appid="ld")
+            tasks = (tl.get("data", {}) or {}).get("taskList", []) or []
+            got = 0
+            for t in tasks:
+                t_id = t.get("taskId")
+                if not t_id:
+                    continue
+                rr = api(session, cookie, "receieveRanchTask",
+                         {"taskId": t_id, "version": 2}, appid="ld")
+                if rr.get("success") or rr.get("code") in ("0", 0):
+                    got += 1
+                time.sleep(1)
+            log.append(f"任务领奖:{got}个")
+        except Exception as e:
+            log.append(f"任务领取异常:{e}")
+
+        # 抽奖（最多 5 次）
+        try:
+            for _ in range(5):
+                lot = api(session, cookie, "ranchLottery",
+                          {"version": 2, "type": 1}, appid="ld")
+                if not (lot.get("success") or lot.get("code") in ("0", 0)):
+                    break
+                time.sleep(1)
+            log.append("抽奖:已执行")
+        except Exception as e:
+            log.append(f"抽奖异常:{e}")
+
+        return f"【{pin}】东东牧场：{' | '.join(log)}"
     except Exception as e:
         return f"【{pin}】东东牧场异常：{e}"
 
