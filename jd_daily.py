@@ -416,24 +416,28 @@ def main():
     if not cookies:
         # ---- 临时诊断（确认注入失败根因后移除）----
         print("【诊断】开始排查 JD_COOKIE 来源：")
-        try:
-            import sqlite3
-            print("  sqlite3 模块: 可用")
-            for db in ["/ql/data/db/settings.db", "/ql/db/settings.db", "/ql/data/db/ql.db"]:
-                try:
-                    conn = sqlite3.connect(db); cur = conn.cursor()
-                    cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                    tabs = [r[0] for r in cur.fetchall()]
-                    print(f"  {db} 表: {tabs}")
-                    if "envs" in tabs:
-                        cur.execute("SELECT name, status FROM envs")
-                        rows = cur.fetchall()
-                        print(f"  envs 共 {len(rows)} 条, 含JD_COOKIE={any(n=='JD_COOKIE' for n,_ in rows)}")
-                    conn.close()
-                except Exception as e:
-                    print(f"  {db} 错误: {e}")
-        except Exception as e:
-            print("  sqlite3 模块不可用:", e)
+        import os, glob
+        for d in ["/ql/config", "/ql/data/db", "/ql/data", "/ql"]:
+            try:
+                print(f"  目录 {d}: {sorted(os.listdir(d))[:30]}")
+            except Exception as e:
+                print(f"  目录 {d} 错误: {e}")
+        for p in glob.glob("/ql/**/*.json", recursive=True)[:200]:
+            if "node_modules" in p or "/.git/" in p:
+                continue
+            try:
+                with open(p, "r", encoding="utf-8", errors="ignore") as fh:
+                    if "JD_COOKIE" in fh.read(200000):
+                        print("  >>> 含 JD_COOKIE 文件:", p)
+            except Exception:
+                pass
+        for p in ["/ql/config/env.sh", "/ql/data/config/env.sh", "/ql/env.sh"]:
+            try:
+                with open(p, "r", encoding="utf-8", errors="ignore") as fh:
+                    txt = fh.read()
+                print(f"  {p} 存在, 含JD_COOKIE={'JD_COOKIE' in txt}")
+            except Exception:
+                print(f"  {p} 不存在")
         # ---- 诊断结束 ----
         notify("京东脚本", "未检测到 JD_COOKIE 环境变量，请在青龙面板中配置。")
         return
