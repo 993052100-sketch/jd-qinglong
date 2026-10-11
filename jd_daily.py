@@ -414,6 +414,27 @@ def main():
     pins = [get_pin(c) for c in cookies]
     print(f"== 京东脚本启动：检测到 {len(cookies)} 个账号 -> {', '.join(pins)} ==")
     if not cookies:
+        # ---- 临时诊断（确认注入失败根因后移除）----
+        print("【诊断】开始排查 JD_COOKIE 来源：")
+        try:
+            import sqlite3
+            print("  sqlite3 模块: 可用")
+            for db in ["/ql/data/db/settings.db", "/ql/db/settings.db", "/ql/data/db/ql.db"]:
+                try:
+                    conn = sqlite3.connect(db); cur = conn.cursor()
+                    cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                    tabs = [r[0] for r in cur.fetchall()]
+                    print(f"  {db} 表: {tabs}")
+                    if "envs" in tabs:
+                        cur.execute("SELECT name, status FROM envs")
+                        rows = cur.fetchall()
+                        print(f"  envs 共 {len(rows)} 条, 含JD_COOKIE={any(n=='JD_COOKIE' for n,_ in rows)}")
+                    conn.close()
+                except Exception as e:
+                    print(f"  {db} 错误: {e}")
+        except Exception as e:
+            print("  sqlite3 模块不可用:", e)
+        # ---- 诊断结束 ----
         notify("京东脚本", "未检测到 JD_COOKIE 环境变量，请在青龙面板中配置。")
         return
 
