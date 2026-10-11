@@ -67,9 +67,30 @@ def notify(title, content):
 
 
 # ---------- 工具函数 ----------
+def _read_from_env_file():
+    """兜底：青龙通常会把环境变量写入 /ql/config/env.sh，
+    若任务进程未注入 JD_COOKIE，则从此文件读取。"""
+    candidates = ["/ql/config/env.sh", "/ql/data/config/env.sh", "/ql/.env"]
+    for path in candidates:
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                txt = f.read()
+            for line in txt.splitlines():
+                line = line.strip()
+                if line.startswith("export JD_COOKIE=") or line.startswith("JD_COOKIE="):
+                    val = line.split("=", 1)[1].strip().strip("'").strip('"')
+                    if val and val.lower() not in ("''", '""'):
+                        return val
+        except Exception:
+            continue
+    return ""
+
+
 def get_cookies():
     """从环境变量读取多个账号的 Cookie（支持 & 与换行分隔）"""
     raw = os.environ.get("JD_COOKIE", "")
+    if not raw:
+        raw = _read_from_env_file()
     if not raw:
         return []
     parts = re.split(r"[&\n]+", raw.strip())
