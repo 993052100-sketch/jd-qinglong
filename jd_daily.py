@@ -86,11 +86,39 @@ def _read_from_env_file():
     return ""
 
 
+def _read_from_db():
+    """兜底：青龙的环境变量保存在 sqlite 数据库(envs 表)，
+    若进程环境与 env.sh 均未提供 JD_COOKIE，则直接查库。"""
+    try:
+        import sqlite3
+    except Exception:
+        return ""
+    candidates = [
+        "/ql/data/db/settings.db", "/ql/db/settings.db",
+        "/ql/data/db/ql.db", "/ql/config/db/settings.db",
+    ]
+    for db in candidates:
+        try:
+            conn = sqlite3.connect(db)
+            cur = conn.cursor()
+            cur.execute("SELECT name, value, status FROM envs")
+            for name, value, status in cur.fetchall():
+                if name == "JD_COOKIE" and int(status) == 0 and value:
+                    conn.close()
+                    return value
+            conn.close()
+        except Exception:
+            continue
+    return ""
+
+
 def get_cookies():
     """从环境变量读取多个账号的 Cookie（支持 & 与换行分隔）"""
     raw = os.environ.get("JD_COOKIE", "")
     if not raw:
         raw = _read_from_env_file()
+    if not raw:
+        raw = _read_from_db()
     if not raw:
         return []
     parts = re.split(r"[&\n]+", raw.strip())
