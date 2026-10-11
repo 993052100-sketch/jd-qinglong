@@ -3,13 +3,13 @@
 """
 京东每日自动化脚本（青龙面板专用）
 ================================
-功能：
-  1. 京东 App 签到领京豆
-  2. 京喜签到
-  3. 京东超市签到
-  4. 看视频 / 做任务赚京豆（best-effort，接口随活动变动）
-  5. 东东农场（种豆得豆）：签到 + 浇水 + 任务奖励领取 + 抽奖
-  6. 东东牧场（养牛养羊）：签到 + 喂养 + 任务奖励领取 + 抽奖
+功能（2026-10 实测校准）：
+  1. 京东 App 签到领京豆（signBeanAct，实测可用）
+  2. 做任务赚京豆（beanTaskList/beanDoTask/beanHomeIconDoTask，实测格式正确）
+  3. 逛首页领京豆（beanHomeIconDoTask）
+
+  以下活动接口已升级为 h5st 签名体系，纯 HTTP 脚本暂无法支持：
+  京喜签到（活动疑似下线）、京东超市签到、东东农场、东东牧场。
 
 == 部署步骤（飞牛 NAS 上的青龙面板）==
 1. 青龙面板 → 环境变量 → 新建：
@@ -20,7 +20,7 @@
 3. 脚本管理 → 上传本文件到 /ql/data/scripts/jd_daily.py （或走订阅拉取）
 4. 定时任务 → 新建：
       命令：python3 /ql/data/scripts/jd_daily.py
-      cron：0 9 * * *   （每天上午 9 点）
+      cron：0 9 * * *   （每天上午 9 点，启动后会再随机延迟防风控）
 
 == 说明 ==
 - 本脚本调用京东公开接口，依赖京东服务端稳定性；部分活动接口会调整，
@@ -202,12 +202,18 @@ def api(session, cookie, function_id, body, appid="ld"):
 
 
 def _result(res, pin, name):
-    """统一把接口返回转换成可读结果字符串"""
+    """统一把接口返回转换成可读结果字符串（覆盖 echo/errorMessage/errorCode）"""
     if res.get("error"):
         return f"【{pin}】{name}失败：{res['error']}"
-    if res.get("success") or res.get("code") in ("0", 0):
+    if res.get("code") in ("0", 0) or res.get("success"):
+        # code=0 但可能带业务错误码（风控软限流等）
+        err_code = res.get("errorCode")
+        err_msg = res.get("errorMessage")
+        if err_code and err_msg:
+            return f"【{pin}】{name}：{err_msg}({err_code})"
         return f"【{pin}】{name}成功"
-    return f"【{pin}】{name}：{res.get('message') or res}"
+    msg = res.get("errorMessage") or res.get("message") or res.get("echo") or res
+    return f"【{pin}】{name}：{msg}"
 
 
 # ---------- 具体任务 ----------
@@ -227,200 +233,107 @@ def task_jd_bean_sign(session, cookie):
         return f"【{pin}】京东签到异常：{e}"
 
 
-def task_jingxi_sign(session, cookie):
-    """京喜签到"""
-    pin = get_pin(cookie)
-    try:
-        body = {
-            "businessId": "", "jumpType": 1, "pageClickKey": "BOTTOM_TAB",
-            "pageId": "MSHOP_HOME", "reqSrc": "", "scene": "",
-            "subTitleId": "", "titleId": "", "token": "",
-        }
-        res = api(session, cookie, "interact_sign_getSign", body, appid="CcApp")
-        return _result(res, pin, "京喜签到")
-    except Exception as e:
-        return f"【{pin}】京喜签到异常：{e}"
+def _is_throttled(res):
+    """判断是否被京东风控软限流（VH304/TI120 等业务错误码）"""
+    ec = str(res.get("errorCode") or "")
+    msg = str(res.get("errorMessage") or "")
+    return ec in ("VH304", "TI120") or ("火爆" in msg) or ("人数较多" in msg)
 
 
-def task_supermarket_sign(session, cookie):
-    """京东超市签到"""
-    pin = get_pin(cookie)
-    try:
-        api(session, cookie, "getSignInfo", {"channel": "99"}, appid="ld")
-        res = api(session, cookie, "doSign", {"channel": "99"}, appid="ld")
-        return _result(res, pin, "京东超市签到")
-    except Exception as e:
-        return f"【{pin}】京东超市签到异常：{e}"
-
-
-def task_bean_video(session, cookie):
+def task_bean_tasks(session, cookie):
     """
-    看视频 / 做任务赚京豆（best-effort）
-    京东赚京豆任务体系接口变动频繁，这里给出通用流程骨架：
-    查任务 → 领任务 → 做任务（看视频类通常等待后上报）。
-    具体 functionId / body 可能需按当期活动微调。
+    做任务赚京豆（2026-10 实测校准）
+    流程（与社区 jd_bean_home 脚本一致）：
+      1. beanHomeIconDoTask flag=0 做逛首页任务，flag=1 领奖
+      2. beanTaskList 拉任务列表（含 taskToken）
+      3. 浏览类任务(taskType 8/9)：beanDoTask actionType=1 → 等待 waitDuration → actionType=0 领取
+      4. 非浏览类任务：beanDoTask actionType=1 完成即得分
+    说明：接口无需 h5st 签名；短时间高频调用会触发风控限流（VH304/TI120），
+    故限制单次最多做 10 个子任务、全程随机间隔。
     """
     pin = get_pin(cookie)
+    log = []
+    done = 0
+    throttled = 0
     try:
-        res = api(session, cookie, "queryTaskList", {"taskType": "bean"}, appid="ld")
-        if res.get("error"):
-            return f"【{pin}】赚京豆查询失败：{res['error']}"
-        tasks = res.get("data", {}).get("taskList", []) or []
-        done = 0
-        for t in tasks:
-            t_id = t.get("taskId") or t.get("id")
-            if not t_id:
-                continue
-            api(session, cookie, "getTaskDetail", {"taskId": t_id}, appid="ld")
-            do = api(session, cookie, "doTask",
-                     {"taskId": t_id, "taskType": "bean"}, appid="ld")
-            if do.get("success") or do.get("code") in ("0", 0):
+        # 1) 逛首页任务（先做后领）
+        try:
+            r1 = api(session, cookie, "beanHomeIconDoTask",
+                     {"flag": "0", "viewChannel": "myjd"})
+            time.sleep(random.uniform(2, 4))
+            r2 = api(session, cookie, "beanHomeIconDoTask",
+                     {"flag": "1", "viewChannel": "AppHome"})
+            if _is_throttled(r2):
+                log.append("逛首页:限流")
+                throttled += 1
+            elif r2.get("code") in ("0", 0) and not r2.get("errorCode"):
+                log.append("逛首页:OK")
                 done += 1
-            time.sleep(random.uniform(1, 4))
-        return (f"【{pin}】赚京豆任务完成 {done} 个"
-                f"（接口随活动变化，请关注运行日志）")
-    except Exception as e:
-        return f"【{pin}】赚京豆任务异常：{e}"
-
-
-def task_jd_farm(session, cookie):
-    """
-    东东农场（种豆得豆）每日任务（best-effort）
-    流程：进入农场 → 签到 → 浇水(用满当日水) → 领取任务奖励 → 抽奖。
-    各动作相互独立、异常兜底，单个失败不影响其他。
-    接口随版本变动是常态，请关注运行日志；若某 functionId 长期报错，按当期活动微调。
-    """
-    pin = get_pin(cookie)
-    log = []
-    try:
-        home = api(session, cookie, "farmHome", {"version": 4, "channel": 1}, appid="ld")
-        if home.get("error"):
-            return f"【{pin}】东东农场进入失败：{home['error']}"
-        data = home.get("data", {}) or {}
-        round_id = data.get("roundId") or data.get("farmUserPro", {}).get("roundId")
-
-        # 签到
-        try:
-            r = api(session, cookie, "farmSign", {"roundId": round_id}, appid="ld")
-            ok = r.get("success") or r.get("code") in ("0", 0)
-            log.append("签到:" + ("OK" if ok else str(r.get("message", "-"))))
+            else:
+                log.append("逛首页:-")
         except Exception as e:
-            log.append(f"签到异常:{e}")
+            log.append(f"逛首页异常:{e}")
 
-        # 浇水（最多连续 10 次，用满当日水滴即停）
-        try:
-            for _ in range(10):
-                w = api(session, cookie, "farmWater",
-                        {"roundId": round_id, "type": 1}, appid="ld")
-                if not (w.get("success") or w.get("code") in ("0", 0)):
+        # 2) 任务列表 + 逐个完成
+        res = api(session, cookie, "beanTaskList",
+                  {"viewChannel": "AppHome", "beanVersion": 1})
+        if res.get("error"):
+            log.append(f"任务列表失败:{res['error']}")
+            return f"【{pin}】赚京豆：{' | '.join(log)}"
+        tasks = (res.get("data") or {}).get("taskInfos") or []
+        if not tasks:
+            log.append("任务列表:0个")
+            return f"【{pin}】赚京豆：{' | '.join(log)}"
+
+        MAX_SUBTASKS = 10
+        for t in tasks:
+            if done >= MAX_SUBTASKS:
+                break
+            t_name = t.get("taskName", "?")
+            t_type = t.get("taskType")
+            if (t.get("times", 0) or 0) >= (t.get("maxTimes", 1) or 1):
+                continue
+            for sub in t.get("subTaskVOS") or []:
+                if done >= MAX_SUBTASKS:
                     break
-                time.sleep(random.uniform(1, 4))
-            log.append("浇水:已执行")
-        except Exception as e:
-            log.append(f"浇水异常:{e}")
-
-        # 任务列表：查询 + 领取已完成任务奖励
-        try:
-            tl = api(session, cookie, "farmTaskList",
-                     {"version": 4, "channel": 1, "roundId": round_id}, appid="ld")
-            tasks = (tl.get("data", {}) or {}).get("taskList", []) or []
-            got = 0
-            for t in tasks:
-                t_id = t.get("taskId")
-                if not t_id:
+                if sub.get("status") != 1:
                     continue
-                rr = api(session, cookie, "receiveFarmTask",
-                         {"taskId": t_id, "taskType": t.get("taskType", 2),
-                          "roundId": round_id}, appid="ld")
-                if rr.get("success") or rr.get("code") in ("0", 0):
-                    got += 1
-                time.sleep(random.uniform(1, 4))
-            log.append(f"任务领奖:{got}个")
-        except Exception as e:
-            log.append(f"任务领取异常:{e}")
-
-        # 抽奖（用剩余抽奖券，最多 5 次）
-        try:
-            for _ in range(5):
-                lot = api(session, cookie, "farmLottery",
-                          {"type": 1, "actionType": 1, "roundId": round_id}, appid="ld")
-                if not (lot.get("success") or lot.get("code") in ("0", 0)):
-                    break
-                time.sleep(random.uniform(1, 4))
-            log.append("抽奖:已执行")
-        except Exception as e:
-            log.append(f"抽奖异常:{e}")
-
-        return f"【{pin}】东东农场：{' | '.join(log)}"
-    except Exception as e:
-        return f"【{pin}】东东农场异常：{e}"
-
-
-def task_jd_ranch(session, cookie):
-    """
-    东东牧场（养牛养羊）每日任务（best-effort）
-    流程：初始化 → 签到 → 喂养(用满饲料) → 领取任务奖励 → 抽奖。
-    各动作相互独立、异常兜底。接口变动频繁，请按需微调。
-    """
-    pin = get_pin(cookie)
-    log = []
-    try:
-        init = api(session, cookie, "taskInit", {"version": 2}, appid="ld")
-        if init.get("error"):
-            return f"【{pin}】东东牧场进入失败：{init['error']}"
-
-        # 签到
-        try:
-            r = api(session, cookie, "ranchSign", {"version": 2, "type": 1}, appid="ld")
-            ok = r.get("success") or r.get("code") in ("0", 0)
-            log.append("签到:" + ("OK" if ok else str(r.get("message", "-"))))
-        except Exception as e:
-            log.append(f"签到异常:{e}")
-
-        # 喂养（最多连续 10 次，用满饲料即停）
-        try:
-            for _ in range(10):
-                f = api(session, cookie, "feed", {"version": 2, "type": 1}, appid="ld")
-                if not (f.get("success") or f.get("code") in ("0", 0)):
-                    break
-                time.sleep(random.uniform(1, 4))
-            log.append("喂养:已执行")
-        except Exception as e:
-            log.append(f"喂养异常:{e}")
-
-        # 任务列表：查询 + 领取已完成任务奖励
-        try:
-            tl = api(session, cookie, "taskList", {"version": 2}, appid="ld")
-            tasks = (tl.get("data", {}) or {}).get("taskList", []) or []
-            got = 0
-            for t in tasks:
-                t_id = t.get("taskId")
-                if not t_id:
+                token = sub.get("taskToken", "")
+                if not token:
                     continue
-                rr = api(session, cookie, "receieveRanchTask",
-                         {"taskId": t_id, "version": 2}, appid="ld")
-                if rr.get("success") or rr.get("code") in ("0", 0):
-                    got += 1
-                time.sleep(random.uniform(1, 4))
-            log.append(f"任务领奖:{got}个")
-        except Exception as e:
-            log.append(f"任务领取异常:{e}")
+                r1 = api(session, cookie, "beanDoTask",
+                         {"actionType": 1, "taskToken": token})
+                if _is_throttled(r1):
+                    throttled += 1
+                    time.sleep(random.uniform(3, 6))
+                    continue
+                if t_type in (8, 9):
+                    wait = min(t.get("waitDuration") or 5, 15)
+                    time.sleep(wait + random.uniform(1, 3))
+                    r0 = api(session, cookie, "beanDoTask",
+                             {"actionType": 0, "taskToken": token})
+                    if _is_throttled(r0):
+                        throttled += 1
+                    elif r0.get("code") in ("0", 0) and not r0.get("errorCode"):
+                        done += 1
+                        log.append(f"{t_name}:OK")
+                    else:
+                        log.append(f"{t_name}:"
+                                   f"{r0.get('errorMessage') or r0.get('echo') or '-'}")
+                else:
+                    if r1.get("code") in ("0", 0) and not r1.get("errorCode"):
+                        done += 1
+                        log.append(f"{t_name}:OK")
+                    else:
+                        log.append(f"{t_name}:"
+                                   f"{r1.get('errorMessage') or r1.get('echo') or '-'}")
+                time.sleep(random.uniform(3, 8))
+                break  # 每个任务当天做一次即可
 
-        # 抽奖（最多 5 次）
-        try:
-            for _ in range(5):
-                lot = api(session, cookie, "ranchLottery",
-                          {"version": 2, "type": 1}, appid="ld")
-                if not (lot.get("success") or lot.get("code") in ("0", 0)):
-                    break
-                time.sleep(random.uniform(1, 4))
-            log.append("抽奖:已执行")
-        except Exception as e:
-            log.append(f"抽奖异常:{e}")
-
-        return f"【{pin}】东东牧场：{' | '.join(log)}"
+        log.append(f"完成:{done}个" + (f"(限流:{throttled}次)" if throttled else ""))
+        return f"【{pin}】赚京豆：{' | '.join(log)}"
     except Exception as e:
-        return f"【{pin}】东东牧场异常：{e}"
+        return f"【{pin}】赚京豆异常：{e}"
 
 
 # ---------- 主流程 ----------
@@ -449,16 +362,14 @@ def main():
         s.headers.update({"Connection": "keep-alive"})
         msgs = [
             task_jd_bean_sign(s, cookie),
-            task_jingxi_sign(s, cookie),
-            task_supermarket_sign(s, cookie),
-            task_bean_video(s, cookie),
-            task_jd_farm(s, cookie),
-            task_jd_ranch(s, cookie),
+            task_bean_tasks(s, cookie),
         ]
         all_msgs.extend(msgs)
         time.sleep(random.uniform(3, 10))  # 账号间随机间隔，降低风控
 
     content = "\n".join(all_msgs)
+    content += ("\n\n[说明] 京喜签到(活动已下线)、京东超市/东东农场/东东牧场"
+                "\n(接口已升级为 h5st 签名体系)暂无法用纯脚本支持，详见 README。")
     notify("京东每日任务", content)
     print(content)
 
