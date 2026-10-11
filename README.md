@@ -6,7 +6,11 @@
 | 文件 | 作用 |
 |------|------|
 | `jd_daily.py` | 每日任务：京东 App 签到领京豆、做任务赚京豆（含逛首页） |
+| `jd_guagua.js` | 天天刮京豆（社区脚本，内置 h5st 签名；做任务攒刮卡次数 + 刮卡 + 签到卡） |
+| `jd_guagua_run.py` | 刮刮卡启动器：兜底读取 JD_COOKIE 后启动上面的 JS（绕开 API 建变量不注入问题） |
 | `jd_cookie_helper.py` | 在你自己电脑上运行，扫码登录后一键提取京东 Cookie |
+| `tb_flashsign.py` | 淘宝 / 闪购签到（mtop 接口 + _m_h5_tk 签名，多账号） |
+| `tb_cookie_helper.py` | 在你自己电脑上运行，登录后一键提取淘宝移动端 Cookie |
 | `requirements.txt` | 青龙面板需要的依赖（requests） |
 | `requirements-local.txt` | 仅本机 Cookie 工具需要（playwright），青龙上不用装 |
 
@@ -64,6 +68,63 @@ python3 jd_cookie_helper.py
 ```
 脚本会打开京东登录页，用手机京东 App 扫码，登录成功后终端会打印一行
 `pt_key=...; pt_pin=...`，整行复制填到青龙的 `JD_COOKIE` 即可。
+
+---
+
+---
+
+## 淘宝闪购签到（tb_flashsign.py）
+
+> ⚠️ 淘宝接口与京东不同：走 `mtop` 体系，必须用 `_m_h5_tk` 做 md5 签名（x-sign），
+> 且**签到活动的接口名（apiName）会随每一期活动变化**。脚本内置的接口名是当前（2026-10）
+> 常见的，若某活动长期失败，需要你按当期活动抓包核对后替换脚本顶部 `SIGN_ACTIVITIES`。
+
+### 部署（与京东类似）
+1. 青龙面板 → **环境变量** → 新建 `TAO_COOKIE`，值为你的淘宝移动端 Cookie（见下方"获取淘宝 Cookie"）
+2. 定时任务 → 新建：
+   - 命令：`python3 /ql/data/scripts/tb_flashsign.py`
+   - 定时：`30 9 * * *`（每天 9:30，脚本会再随机延迟 0~30 分钟防风控）
+3. 可选环境变量：
+   - `TAO_DELAY_MAX`：最大随机延迟分钟数（默认 30，设 `0` 立即执行，手动测试用）
+   - `TAO_APPKEY`：mtop 的 appKey（默认 `12574478`，一般不用改）
+
+### 获取淘宝 Cookie
+在本机（Mac / Windows）执行：
+```bash
+pip install playwright
+playwright install chromium
+python3 tb_cookie_helper.py
+```
+脚本打开淘宝登录页，扫码/账号登录（必要时手动过滑块），成功后终端打印一行
+含 `_m_h5_tk` 的 Cookie，整行复制填到青龙的 `TAO_COOKIE` 即可。
+
+### 如何核对 / 更新签到接口（抓包法）
+当某活动返回 `FAIL_SYS_ILLEGAL_REQUEST` 或一直不成功时：
+1. 手机装好 **HttpCanary / 抓包精灵**（Android）或在电脑用 Charles/Fiddler 配合手机代理
+2. 打开手机淘宝 → 进入「闪购」→「签到」页面，触发一次签到
+3. 在抓包记录里找域名 `h5api.m.taobao.com` 的请求，
+   其 URL 路径 `/h5/{apiName}/1.0/` 里的 `apiName` 就是签到接口名，
+   请求体里的 `data` JSON 就是签到参数
+4. 把这两个值替换进 `tb_flashsign.py` 顶部 `SIGN_ACTIVITIES` 对应项即可
+
+> 提示：淘宝风控较严，建议 crontab 时间与京东错开、不要短时间高频调用；
+> Cookie 一般几天到几十天失效，签到突然不跑就重新抓一次。
+
+---
+
+## 天天刮京豆（jd_guagua.js）
+
+京东 App「京豆」页里的「天天刮京豆」活动：做浏览类任务攒刮卡次数 → 刮卡得京豆，
+另有每日签到卡。该活动接口必须 h5st 签名，因此使用社区维护的混淆 JS 脚本（feverrun/my_scripts）。
+
+1. **Node 依赖**（青龙 → 依赖管理 → NodeJs）：`axios`、`got`、`tough-cookie`、`crypto-js`、`https-proxy-agent`、`global-agent`
+2. **定时任务**：
+   - 命令：`python3 /ql/data/scripts/993052100-sketch_jd-qinglong_main/jd_guagua_run.py`
+   - 定时：`20 9 * * *`（与主任务错开 20 分钟）
+3. Cookie 复用 `JD_COOKIE` 环境变量，无需另建（启动器会自动兜底读取并传给 JS）
+
+> ⚠️ 说明：该 JS 为社区混淆脚本（京东此类脚本惯例，防接口分析），运行时会将你的
+> Cookie 用于调用京东官方接口。介意者可自行审计或放弃此任务。
 
 ---
 
